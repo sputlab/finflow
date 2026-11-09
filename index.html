@@ -7,8 +7,6 @@
     <title>FinFlow | Proiezione Saldo</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
 /* ── Reset & tokens ── */
 *,::before,::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -155,6 +153,7 @@ input:checked + .toggle-slider::before { transform: translateX(18px); }
 .divider { height: 1px; background: var(--c-border); margin: .9rem 0; }
 .text-green { color: var(--c-green); }
 .text-red { color: var(--c-red); }
+.mt { margin-top: .5rem; }
 
 .add-punto-certo-box { background: var(--c-surface2); border: 1px dashed var(--c-border); padding: .75rem; border-radius: var(--r-sm); margin-bottom: .75rem; display: none; }
 .add-punto-certo-box.active { display: block; }
@@ -215,9 +214,7 @@ input:checked + .toggle-slider::before { transform: translateX(18px); }
                 <label class="toggle"><input type="checkbox" id="themeToggleDesktop"><span class="toggle-slider"></span></label>
             </div>
             <!-- SEMVER -->
-            <div style="text-align:center; margin-top:1.25rem; font-size:.7rem; color:var(--c-muted); font-weight:600; letter-spacing:.05em;">
-                v1.1.0
-            </div>
+            <div id="appVersion" style="text-align:center; margin-top:1.25rem; font-size:.7rem; color:var(--c-muted); font-weight:600; letter-spacing:.05em;"></div>
         </div>
     </aside>
 
@@ -366,6 +363,11 @@ input:checked + .toggle-slider::before { transform: translateX(18px); }
 </div>
 
 <script>
+// ── Versione (SemVer: MAJOR.MINOR.PATCH — vedi CHANGELOG.md) ──
+const APP_VERSION = '1.2.0';
+// Versione dello schema dati salvato/esportato. Incrementare solo se cambia la struttura di appState.
+const SCHEMA_VERSION = 1;
+
 // ── Stato globale ──
 let appState = {
     accounts: [],
@@ -380,23 +382,71 @@ let editingMovementId = null;
 const PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#0ea5e9'];
 function getRandomHex() { return PALETTE[Math.floor(Math.random() * PALETTE.length)]; }
 
+// ID univoci anche se generati nello stesso millisecondo
+let lastId = 0;
+function genId() { const t = Date.now(); lastId = t > lastId ? t : lastId + 1; return lastId; }
+
+function escapeHTML(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 // ── Date Helpers ──
-function addDays(d, n) { let r = new Date(d); r.setDate(r.getDate() + n); return r; }
+// Tutte le date sono gestite in ora LOCALE a mezzanotte. `new Date('YYYY-MM-DD')` e
+// `toISOString()` lavorano in UTC e causavano uno sfasamento di un giorno in Italia.
+function isValidYMD(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(parseYMD(s)); }
+function parseYMD(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+function formatYMD(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+// Aggiunge n mesi bloccando il giorno all'ultimo del mese (31 gen + 1 → 28/29 feb)
 function addMonths(d, n) {
-    let r = new Date(d);
-    let targetMonth = (r.getMonth() + n) % 12;
-    if (targetMonth < 0) targetMonth += 12;
-    r.setMonth(r.getMonth() + n);
-    if (r.getMonth() !== targetMonth) r.setDate(0);
+    const day = d.getDate();
+    const r = new Date(d.getFullYear(), d.getMonth() + n, 1);
+    const lastDay = new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate();
+    r.setDate(Math.min(day, lastDay));
     return r;
 }
-function addYears(d, n) { return addMonths(d, n * 12); }
-function formatYMD(d) { return d.toISOString().slice(0,10); }
 function formatDisplay(s) { const p=s.split('-'); return `${p[2]}-${p[1]}-${p[0]}`; }
-function diffDays(d1,d2) { return Math.round((new Date(d2)-new Date(d1))/86400000); }
+function diffDays(d1, d2) { return Math.round((d2 - d1) / 86400000); }
+
+// ── Validazione / migrazione dati (localStorage e import JSON) ──
+function normalizeState(raw) {
+    if (!raw || !Array.isArray(raw.accounts)) throw new Error('Formato non valido: manca "accounts".');
+    const accounts = raw.accounts.map((a, i) => ({
+        id: a.id ?? genId(),
+        name: String(a.name ?? `Conto ${i + 1}`),
+        baseBalanceDefault: parseFloat(a.baseBalanceDefault) || 0,
+        color: /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : getRandomHex(),
+        datedBalances: (Array.isArray(a.datedBalances) ? a.datedBalances : [])
+            .filter(b => isValidYMD(b?.date) && isFinite(parseFloat(b.amount)))
+            .map(b => ({ date: b.date, amount: parseFloat(b.amount) }))
+            .sort((x, y) => x.date.localeCompare(y.date)),
+        movimenti: (Array.isArray(a.movimenti) ? a.movimenti : [])
+            .filter(m => m && isValidYMD(m.dataInizio))
+            .map(m => ({
+                ...m,
+                id: m.id ?? genId(),
+                tipo: m.tipo === 'entrata' ? 'entrata' : 'uscita',
+                descrizione: String(m.descrizione ?? ''),
+                importo: Math.abs(parseFloat(m.importo)) || 0,
+                dataFine: isValidYMD(m.dataFine) ? m.dataFine : null,
+                intervalloGiorni: m.frequenza === 'personalizzata' ? Math.max(1, parseInt(m.intervalloGiorni) || 7) : null
+            }))
+    }));
+    const state = {
+        accounts,
+        currentAccountId: raw.currentAccountId ?? 'global',
+        projectionSettings: { orizzonteMesi: parseInt(raw.projectionSettings?.orizzonteMesi) || 12 },
+        theme: raw.theme === 'dark' ? 'dark' : 'light'
+    };
+    if (state.currentAccountId !== 'global' && !accounts.some(a => a.id === state.currentAccountId)) state.currentAccountId = 'global';
+    return state;
+}
 
 // ── Persistenza & History ──
-function saveToLocalStorage() { localStorage.setItem('fintech_flow_v2', JSON.stringify(appState)); }
+function saveToLocalStorage() {
+    try { localStorage.setItem('fintech_flow_v2', JSON.stringify(appState)); }
+    catch(e) { console.warn('Salvataggio locale non riuscito', e); }
+}
 function pushHistory() {
     historyStack = historyStack.slice(0, historyIndex + 1);
     historyStack.push(JSON.parse(JSON.stringify(appState)));
@@ -405,8 +455,11 @@ function pushHistory() {
     saveToLocalStorage();
 }
 function restoreFromHistory(state) {
+    const theme = appState.theme; // il tema non fa parte della cronologia annulla/ripeti
     appState = JSON.parse(JSON.stringify(state));
-    refreshAllUI(); saveToLocalStorage(); calcolaProiezione();
+    appState.theme = theme;
+    resetMovementForm();
+    refreshAllUI(); saveToLocalStorage();
 }
 function undo() { if(historyIndex > 0) { historyIndex--; restoreFromHistory(historyStack[historyIndex]); } }
 function redo() { if(historyIndex < historyStack.length - 1) { historyIndex++; restoreFromHistory(historyStack[historyIndex]); } }
@@ -424,25 +477,29 @@ function resetMovementForm() {
     document.getElementById('dataInizio').value = formatYMD(new Date());
     document.getElementById('dataFine').value = '';
     document.getElementById('frequenza').value = 'una_tantum';
+    document.getElementById('intervalloGiorni').value = 7;
     toggleFreqAvanzata();
 }
 
 function addAccount(name) {
-    const id = Date.now();
+    const id = genId();
     appState.accounts.push({ id, name: name||`Conto ${appState.accounts.length+1}`, baseBalanceDefault:0, color: getRandomHex(), datedBalances:[], movimenti:[] });
     appState.currentAccountId = id;
     pushHistory(); refreshAllUI(); chiudiSidebar();
 }
 function deleteAccount(id) {
     if(appState.accounts.length <= 1) { alert("Deve esistere almeno un conto."); return; }
+    const acc = appState.accounts.find(a => a.id === id);
+    if(!confirm(`Eliminare il conto "${acc?.name}" con tutti i suoi movimenti?`)) return;
     appState.accounts = appState.accounts.filter(a => a.id !== id);
     if(appState.currentAccountId === id) appState.currentAccountId = 'global';
-    pushHistory(); refreshAllUI(); calcolaProiezione();
+    pushHistory(); refreshAllUI();
 }
 function setCurrentAccount(id) {
+    // La navigazione tra conti non è un'azione da annullare: salva senza toccare la cronologia
     appState.currentAccountId = id;
     resetMovementForm();
-    pushHistory(); refreshAllUI(); calcolaProiezione(); chiudiSidebar();
+    saveToLocalStorage(); refreshAllUI(); chiudiSidebar();
 }
 
 function updateAccountColor(id, newColor) {
@@ -452,13 +509,11 @@ function updateAccountColor(id, newColor) {
 
 function addMovementToCurrent(mov) {
     const acc = getCurrentAccount(); if(!acc) return;
-    mov.id = editingMovementId ?? Date.now();
-    if(editingMovementId !== null) {
-        const idx = acc.movimenti.findIndex(m => m.id === editingMovementId);
-        if(idx !== -1) acc.movimenti[idx] = mov;
-    } else {
-        acc.movimenti.push(mov);
-    }
+    mov.id = editingMovementId ?? genId();
+    const idx = editingMovementId !== null ? acc.movimenti.findIndex(m => m.id === editingMovementId) : -1;
+    // Se il movimento in modifica non esiste più (es. dopo un annulla) lo aggiunge invece di perderlo
+    if(idx !== -1) acc.movimenti[idx] = mov;
+    else acc.movimenti.push(mov);
     pushHistory(); refreshMovementsTable(); calcolaProiezione(); resetMovementForm();
 }
 function deleteMovement(id) {
@@ -469,7 +524,7 @@ function deleteMovement(id) {
 function addDatedBalance(date, amount) {
     const acc = getCurrentAccount(); if(!acc) return;
     acc.datedBalances.push({ date, amount: parseFloat(amount) });
-    acc.datedBalances.sort((a,b) => new Date(a.date) - new Date(b.date));
+    acc.datedBalances.sort((a,b) => a.date.localeCompare(b.date));
     pushHistory(); refreshDatedList(); calcolaProiezione();
     document.getElementById('inputDataPuntoCerto').value = '';
     document.getElementById('inputImportoPuntoCerto').value = '';
@@ -480,29 +535,31 @@ function deleteDatedBalance(index) {
     if(acc) { acc.datedBalances.splice(index,1); pushHistory(); refreshDatedList(); calcolaProiezione(); }
 }
 
-function getOccorrenze(mov, startDate, endDate) {
-    const freq = mov.frequenza;
-    const start = new Date(mov.dataInizio);
-    const end = mov.dataFine ? new Date(mov.dataFine) : null;
-    if(end && end < startDate) return [];
-    const limit = (end && end < endDate) ? end : new Date(endDate);
-    const dates = [];
-    if(freq === "una_tantum") {
-        if(start >= startDate && start <= endDate) dates.push(new Date(start));
-        return dates;
+// La k-esima occorrenza è sempre calcolata dalla data di inizio (non dalla precedente):
+// così un mensile del 31 resta "fine mese" invece di scivolare al 28 dopo febbraio.
+function nthOccurrence(mov, start, k) {
+    switch(mov.frequenza) {
+        case "giornaliera":    return addDays(start, k);
+        case "settimanale":    return addDays(start, 7 * k);
+        case "mensile":        return addMonths(start, k);
+        case "bimestrale":     return addMonths(start, 2 * k);
+        case "trimestrale":    return addMonths(start, 3 * k);
+        case "annuale":        return addMonths(start, 12 * k);
+        case "personalizzata": return addDays(start, Math.max(1, parseInt(mov.intervalloGiorni) || 7) * k);
+        default:               return k === 0 ? start : null; // una_tantum / sconosciuta
     }
-    let current = new Date(start), maxLoop = 10000;
-    while(current <= limit && maxLoop-- > 0) {
-        if(current >= startDate) dates.push(new Date(current));
-        switch(freq) {
-            case "giornaliera": current = addDays(current,1); break;
-            case "settimanale": current = addDays(current,7); break;
-            case "mensile": current = addMonths(current,1); break;
-            case "bimestrale": current = addMonths(current,2); break;
-            case "trimestrale": current = addMonths(current,3); break;
-            case "annuale": current = addYears(current,1); break;
-            case "personalizzata": current = addDays(current, mov.intervalloGiorni||7); break;
-        }
+}
+
+function getOccorrenze(mov, startDate, endDate) {
+    const start = parseYMD(mov.dataInizio);
+    const end = mov.dataFine ? parseYMD(mov.dataFine) : null;
+    const limit = (end && end < endDate) ? end : endDate;
+    const dates = [];
+    // Nessun tetto fisso di iterazioni: il vecchio limite di 10000 troncava le giornaliere oltre ~27 anni
+    for(let k = 0; ; k++) {
+        const d = nthOccurrence(mov, start, k);
+        if(!d || d > limit) break;
+        if(d >= startDate) dates.push(d);
     }
     return dates;
 }
@@ -528,11 +585,11 @@ function getDailyBalances(acc, simStart, totalDays) {
         rawSaldi.push(saldo);
     }
 
-    const sortedBalances = [...(acc.datedBalances||[])].sort((a,b) => new Date(a.date) - new Date(b.date));
+    const sortedBalances = [...(acc.datedBalances||[])].sort((a,b) => a.date.localeCompare(b.date));
 
+    // Il saldo noto è inteso a fine giornata (include i movimenti di quel giorno)
     for(const bal of sortedBalances) {
-        const balDate = new Date(bal.date); balDate.setHours(0,0,0,0);
-        const idx = diffDays(simStart, balDate);
+        const idx = diffDays(simStart, parseYMD(bal.date));
         if(idx >= 0 && idx < rawSaldi.length) {
             // FIX: rawSaldi[idx] ha già incorporato gli offset dei punti precedenti.
             // Non usiamo più cumulativeOffset per evitare il doppio conteggio.
@@ -558,10 +615,9 @@ function computeProjection() {
 
     let simStart = new Date(today);
     accountsToProcess.forEach(acc => {
-        acc.movimenti.forEach(m => { const d = new Date(m.dataInizio); if (d < simStart) simStart = d; });
-        acc.datedBalances.forEach(db => { const d = new Date(db.date); if (d < simStart) simStart = d; });
+        acc.movimenti.forEach(m => { const d = parseYMD(m.dataInizio); if (d < simStart) simStart = d; });
+        acc.datedBalances.forEach(db => { const d = parseYMD(db.date); if (d < simStart) simStart = d; });
     });
-    simStart.setHours(0,0,0,0);
     const totalDays = diffDays(simStart, viewEnd) + 1;
 
     const rawLabels = [];
@@ -700,9 +756,9 @@ function refreshAccountsUI() {
         div.innerHTML = `
             <div class="acc-name">
                 <div class="color-picker-wrap" title="Cambia colore conto">
-                    <input type="color" value="${acc.color}" class="acc-color-input">
+                    <input type="color" value="${escapeHTML(acc.color)}" class="acc-color-input">
                 </div>
-                ${acc.name}
+                ${escapeHTML(acc.name)}
             </div>
             <span class="acc-actions">
                 <button class="btn-ghost btn-sm" data-edit="${acc.id}">✏️</button>
@@ -715,7 +771,7 @@ function refreshAccountsUI() {
             updateAccountColor(acc.id, e.target.value);
         });
 
-        div.querySelector('[data-edit]').addEventListener('click', e => { e.stopPropagation(); const n=prompt('Rinomina:', acc.name); if(n){ acc.name=n; pushHistory(); refreshAccountsUI(); } });
+        div.querySelector('[data-edit]').addEventListener('click', e => { e.stopPropagation(); const n=prompt('Rinomina:', acc.name)?.trim(); if(n){ acc.name=n; pushHistory(); refreshAccountsUI(); calcolaProiezione(); } });
         div.querySelector('[data-del]').addEventListener('click', e => { e.stopPropagation(); deleteAccount(acc.id); });
         div.addEventListener('click', () => setCurrentAccount(acc.id));
         container.appendChild(div);
@@ -742,17 +798,17 @@ function refreshMovementsTable() {
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td data-label="Tipo">${m.tipo==='entrata'?'💰 Ent':'💸 Usc'}</td>
-            <td data-label="Descrizione"><strong>${m.descrizione}</strong></td>
+            <td data-label="Descrizione"><strong>${escapeHTML(m.descrizione)}</strong></td>
             <td data-label="Importo" class="${m.tipo==='entrata'?'text-green':'text-red'}">${fmtEUR(m.importo)}</td>
             <td data-label="Frequenza">${m.frequenza==='personalizzata'?`Ogni ${m.intervalloGiorni}g`:fLabel(m.frequenza)}</td>
             <td data-label="Inizio">${formatDisplay(m.dataInizio)}</td>
             <td data-label="Fine">${m.dataFine?formatDisplay(m.dataFine):'∞'}</td>
-            <td><div style="display:flex;gap:.3rem"><button class="btn-ghost btn-sm edit-mov" data-id="${m.id}">✏️</button><button class="btn-danger btn-sm del-mov" data-id="${m.id}">🗑️</button></div></td>`;
+            <td><div style="display:flex;gap:.3rem"><button class="btn-ghost btn-sm edit-mov" data-id="${escapeHTML(m.id)}">✏️</button><button class="btn-danger btn-sm del-mov" data-id="${escapeHTML(m.id)}">🗑️</button></div></td>`;
         tbody.appendChild(tr);
     });
     tbody.querySelectorAll('.edit-mov').forEach(btn => {
         btn.addEventListener('click', () => {
-            const mov = acc.movimenti.find(m => m.id === parseInt(btn.dataset.id)); if(!mov) return;
+            const mov = acc.movimenti.find(m => String(m.id) === btn.dataset.id); if(!mov) return;
             editingMovementId = mov.id;
             document.getElementById('tipoMovimento').value = mov.tipo; document.getElementById('descrizione').value = mov.descrizione; document.getElementById('importo').value = mov.importo; document.getElementById('frequenza').value = mov.frequenza; document.getElementById('dataInizio').value = mov.dataInizio; document.getElementById('dataFine').value = mov.dataFine || '';
             if(mov.frequenza==='personalizzata') document.getElementById('intervalloGiorni').value = mov.intervalloGiorni;
@@ -764,7 +820,10 @@ function refreshMovementsTable() {
             document.getElementById('cardFormMovimento').scrollIntoView({ behavior:'smooth', block:'start' });
         });
     });
-    tbody.querySelectorAll('.del-mov').forEach(btn => btn.addEventListener('click', () => deleteMovement(parseInt(btn.dataset.id))));
+    tbody.querySelectorAll('.del-mov').forEach(btn => btn.addEventListener('click', () => {
+        const mov = acc.movimenti.find(m => String(m.id) === btn.dataset.id);
+        if(mov) deleteMovement(mov.id);
+    }));
 }
 
 function refreshDatedList() {
@@ -826,22 +885,18 @@ function applyTheme() {
 function toggleTheme() { appState.theme = appState.theme === 'light' ? 'dark' : 'light'; applyTheme(); saveToLocalStorage(); }
 
 window.addEventListener('DOMContentLoaded', () => {
-    const saved = localStorage.getItem('fintech_flow_v2');
+    document.getElementById('appVersion').textContent = `v${APP_VERSION}`;
+
+    let saved = null;
+    try { saved = localStorage.getItem('fintech_flow_v2'); } catch(e) {}
     if(saved) {
-        try {
-            appState = JSON.parse(saved);
-            if(!appState.projectionSettings.orizzonteMesi) appState.projectionSettings.orizzonteMesi = 12;
-            if(!appState.currentAccountId) appState.currentAccountId = 'global';
-        } catch(e){}
+        try { appState = normalizeState(JSON.parse(saved)); }
+        catch(e) { console.warn('Dati locali non validi, avvio con stato vuoto', e); }
     }
     if(!appState.accounts?.length) {
-        appState.accounts = [{ id: Date.now(), name: 'Principale', baseBalanceDefault: 0, color: getRandomHex(), datedBalances: [], movimenti: [] }];
+        appState.accounts = [{ id: genId(), name: 'Principale', baseBalanceDefault: 0, color: getRandomHex(), datedBalances: [], movimenti: [] }];
         appState.currentAccountId = appState.accounts[0].id;
     }
-
-    let changed = false;
-    appState.accounts.forEach(a => { if(!a.color) { a.color = getRandomHex(); changed = true; }});
-    if(changed) saveToLocalStorage();
 
     resetMovementForm();
     applyTheme(); pushHistory(); refreshAllUI();
@@ -863,6 +918,8 @@ window.addEventListener('DOMContentLoaded', () => {
             intervalloGiorni: document.getElementById('frequenza').value === 'personalizzata' ? parseInt(document.getElementById('intervalloGiorni').value) : null
         };
         if(!mov.descrizione || !mov.dataInizio || isNaN(mov.importo) || mov.importo <= 0) { alert('Compila tutti i campi obbligatori (descrizione, data inizio, importo > 0).'); return; }
+        if(mov.dataFine && mov.dataFine < mov.dataInizio) { alert('La data fine non può precedere la data inizio.'); return; }
+        if(mov.frequenza === 'personalizzata' && !(mov.intervalloGiorni >= 1)) { alert('L\'intervallo deve essere di almeno 1 giorno.'); return; }
         addMovementToCurrent(mov);
     });
 
@@ -885,17 +942,34 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('resetZoomBtn').addEventListener('click', () => { if(chartMain) chartMain.resetZoom(); });
     document.getElementById('fullscreenChartBtn').addEventListener('click', apriFullscreen);
     document.getElementById('menuToggleBtn').addEventListener('click', apriSidebar);
-    document.getElementById('btnAddAccount').addEventListener('click', () => { const n=prompt('Nome conto:'); if(n) addAccount(n); });
+    document.getElementById('btnAddAccount').addEventListener('click', () => { const n=prompt('Nome conto:')?.trim(); if(n) addAccount(n); });
 
     document.getElementById('exportFullBtn').addEventListener('click', () => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(appState, null, 2)], {type:'application/json'})); a.download = 'finflow_backup.json'; a.click();
+        const payload = { appVersion: APP_VERSION, schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), ...appState };
+        const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}));
+        const a = document.createElement('a');
+        a.href = url; a.download = `finflow_backup_${formatYMD(new Date())}.json`; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
     document.getElementById('globalImport').addEventListener('change', e => {
-        if(e.target.files[0]) {
-            const reader = new FileReader();
-            reader.onload = ev => { try{ const data = JSON.parse(ev.target.result); if(data.accounts) { appState = data; pushHistory(); refreshAllUI(); applyTheme(); } }catch(e){ alert('Errore JSON'); } };
-            reader.readAsText(e.target.files[0]);
-        }
+        const file = e.target.files[0];
+        e.target.value = ''; // permette di reimportare lo stesso file
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            try {
+                const data = JSON.parse(ev.target.result);
+                if(data.schemaVersion > SCHEMA_VERSION) {
+                    alert(`Il file è stato creato con una versione più recente di FinFlow (${data.appVersion || 'sconosciuta'}). Aggiorna l'app per importarlo.`);
+                    return;
+                }
+                const state = normalizeState(data);
+                if(!state.accounts.length) throw new Error('Nessun conto nel file.');
+                appState = state;
+                resetMovementForm(); pushHistory(); applyTheme(); refreshAllUI();
+            } catch(err) { alert('Errore durante l\'importazione: ' + err.message); }
+        };
+        reader.readAsText(file);
     });
 
     document.addEventListener('keydown', e => { if(e.key==='Escape') chiudiFullscreen(); });
