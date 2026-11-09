@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" id="themeColorMeta" content="#ffffff">
+    <title>FinFlow | Proiezione Saldo</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+/* ── Reset & tokens ── */
+*,::before,::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+    --c-bg:       #f1f5f9;
+    --c-surface:  #ffffff;
+    --c-surface2: #f8fafc;
+    --c-sidebar:  #ffffff;
+    --c-border:   #e2e8f0;
+    --c-text:     #0f172a;
+    --c-muted:    #64748b;
+    --c-accent:   #3b82f6;
+    --c-accent-h: #2563eb;
+    --c-green:    #10b981;
+    --c-red:      #ef4444;
+    --c-warn:     #f59e0b;
+    --c-shadow:   0 2px 8px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.08);
+    --r: 14px;
+    --r-sm: 9px;
+    --sidebar-w: 264px;
+    --topbar-h: 56px;
+    --nav-h: 60px;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+body.dark {
+    --c-bg:       #0f172a;
+    --c-surface:  #1e293b;
+    --c-surface2: #162032;
+    --c-sidebar:  #111827;
+    --c-border:   #334155;
+    --c-text:     #f1f5f9;
+    --c-muted:    #94a3b8;
+    --c-shadow:   0 2px 8px rgba(0,0,0,.35);
+}
+html { scroll-behavior: smooth; }
+body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--c-bg); color: var(--c-text); font-size: 15px; line-height: 1.5; transition: background .25s, color .25s; }
+a { color: inherit; text-decoration: none; }
+img,svg { display: block; }
+
+h1 { font-size: clamp(1.2rem, 4vw, 1.5rem); font-weight: 700; }
+h2 { font-size: clamp(1rem, 3vw, 1.15rem); font-weight: 700; margin-bottom: .5rem; }
+.label-xs { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--c-muted); }
+
+/* Layout shell */
+.shell { display: flex; min-height: 100vh; }
+.sidebar { width: var(--sidebar-w); flex-shrink: 0; background: var(--c-sidebar); border-right: 1px solid var(--c-border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 1rem .75rem; transition: transform .28s ease, box-shadow .28s; z-index: 90; }
+@media (max-width: 768px) { .sidebar { position: fixed; left: 0; height: 100%; width: min(80vw, 300px); transform: translateX(-100%); box-shadow: none; padding-top: calc(var(--topbar-h) + .75rem); padding-bottom: calc(var(--nav-h) + var(--safe-bottom) + 1rem); } .sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,.18); } }
+.drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 89; backdrop-filter: blur(2px); }
+.drawer-overlay.active { display: block; }
+.topbar { display: none; position: fixed; top: 0; left: 0; right: 0; height: var(--topbar-h); background: var(--c-sidebar); border-bottom: 1px solid var(--c-border); align-items: center; justify-content: space-between; padding: 0 1rem; z-index: 95; }
+@media (max-width: 768px) { .topbar { display: flex; } }
+.logo { display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1.1rem; }
+.logo-icon { background: var(--c-accent); color: #fff; border-radius: 10px; width: 32px; height: 32px; display: grid; place-items: center; font-size: 1rem; flex-shrink: 0; }
+.topbar-right { display: flex; align-items: center; gap: .4rem; }
+.sidebar-logo { display: flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1.2rem; padding: .4rem .4rem 1rem; }
+@media (max-width: 768px) { .sidebar-logo { display: none; } }
+
+.sidebar-section { margin-bottom: 1.25rem; }
+.sidebar-label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--c-muted); padding: 0 .4rem; margin-bottom: .4rem; }
+.account-item { display: flex; align-items: center; justify-content: space-between; padding: .55rem .7rem; border-radius: var(--r-sm); border: 1px solid transparent; cursor: pointer; transition: background .15s; margin-bottom: .3rem; gap:.4rem; }
+.account-item:hover { background: var(--c-bg); }
+.account-item.active { background: var(--c-accent); color: #fff; }
+.account-item .acc-name { font-weight: 600; font-size: .9rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: .5rem; }
+.account-item .acc-actions { display: flex; gap: .3rem; flex-shrink: 0; }
+.sidebar-bottom { margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--c-border); display: flex; flex-direction: column; gap: .4rem; }
+
+/* Color Picker in Sidebar */
+.color-picker-wrap { position: relative; width: 14px; height: 14px; border-radius: 50%; overflow: hidden; cursor: pointer; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.1); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.color-picker-wrap input[type="color"] { position: absolute; top: -10px; left: -10px; width: 34px; height: 34px; cursor: pointer; border: none; padding: 0; background: none; }
+body.dark .color-picker-wrap { border-color: rgba(255,255,255,0.2); }
+
+.main { flex: 1; min-width: 0; padding: 1.25rem 1.25rem 2rem; overflow-x: hidden; }
+@media (max-width: 768px) { .main { padding: calc(var(--topbar-h) + .9rem) .85rem calc(var(--nav-h) + var(--safe-bottom) + 1.2rem); } }
+
+/* Cards & KPI */
+.card { background: var(--c-surface); border-radius: var(--r); border: 1px solid var(--c-border); box-shadow: var(--c-shadow); padding: 1.1rem; margin-bottom: 1.1rem; }
+.card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: .6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; margin-bottom: 1.1rem; }
+@media (max-width: 480px) { .kpi-grid { grid-template-columns: 1fr 1fr; } .kpi-grid .kpi-card:first-child { grid-column: 1 / -1; } }
+.kpi-card { background: var(--c-surface); border-radius: var(--r); border: 1px solid var(--c-border); box-shadow: var(--c-shadow); padding: .9rem 1rem; }
+.kpi-icon { font-size: 1.2rem; margin-bottom: .25rem; }
+.kpi-label { font-size: .7rem; font-weight: 600; text-transform: uppercase; color: var(--c-muted); margin-bottom: .15rem; }
+.kpi-value { font-size: clamp(1.25rem, 4vw, 1.65rem); font-weight: 700; letter-spacing: -.01em; }
+
+/* Buttons & Inputs */
+button, .btn-file-label { cursor: pointer; font-family: inherit; font-size: .85rem; font-weight: 600; border-radius: var(--r-sm); border: 1px solid var(--c-border); padding: .55rem .9rem; background: var(--c-surface2); color: var(--c-text); transition: background .15s; display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap; min-height: 40px; }
+button:hover, .btn-file-label:hover { background: var(--c-border); }
+button:active, .btn-file-label:active { opacity: .8; }
+.btn-primary { background: var(--c-accent); color: #fff; border-color: var(--c-accent); }
+.btn-primary:hover { background: var(--c-accent-h); }
+.btn-danger { background: var(--c-red); color: #fff; border-color: var(--c-red); }
+.btn-ghost { background: transparent; border-color: var(--c-border); }
+.btn-sm { padding: .35rem .65rem; font-size: .78rem; min-height: 34px; }
+.btn-block { width: 100%; justify-content: center; }
+.btn-icon { padding: .5rem; min-width: 40px; justify-content: center; }
+.acc-actions button { padding: .3rem .5rem; min-height: 30px; }
+
+input[type=text], input[type=number], input[type=date], select { width: 100%; padding: .6rem .75rem; border-radius: var(--r-sm); border: 1px solid var(--c-border); font-family: inherit; font-size: .9rem; background: var(--c-surface2); color: var(--c-text); transition: border-color .15s; min-height: 42px; appearance: none; cursor: pointer; }
+input:focus, select:focus { outline: none; border-color: var(--c-accent); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+body.dark input, body.dark select { color-scheme: dark; }
+
+.form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .65rem; align-items: end; }
+.form-group { display: flex; flex-direction: column; gap: .3rem; }
+.form-group label { font-size: .72rem; font-weight: 700; text-transform: uppercase; color: var(--c-muted); }
+.form-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .25rem; }
+@media (max-width: 540px) { .form-row { grid-template-columns: 1fr; } .form-actions { flex-direction: column; } .form-actions button { width: 100%; justify-content: center; } }
+
+/* Tables */
+.table-wrapper { overflow-x: auto; border-radius: var(--r-sm); border: 1px solid var(--c-border); }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+th { color: var(--c-muted); font-size: .72rem; font-weight: 700; text-transform: uppercase; padding: .6rem .75rem; border-bottom: 1px solid var(--c-border); background: var(--c-surface2); text-align: left; white-space: nowrap; }
+td { padding: .6rem .75rem; border-bottom: 1px solid var(--c-border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--c-surface2); }
+.empty-state { text-align: center; padding: 1.5rem !important; color: var(--c-muted); }
+
+@media (max-width: 640px) {
+    #tabellaMovimenti thead { display: none; }
+    #tabellaMovimenti tbody tr { display: flex; flex-direction: column; padding: .7rem .75rem; border-bottom: 1px solid var(--c-border); }
+    #tabellaMovimenti td { padding: .15rem 0; border: none; font-size: .85rem; }
+    #tabellaMovimenti td:first-child { font-weight: 700; font-size: .95rem; }
+    #tabellaMovimenti td[data-label]::before { content: attr(data-label) ": "; color: var(--c-muted); font-size: .75rem; font-weight: 600; }
+}
+
+/* Charts & Utils */
+.chart-wrap { position: relative; height: clamp(220px, 45vw, 400px); margin: .75rem 0; }
+.chart-controls { display: flex; justify-content: space-between; align-items: center; margin-top: .75rem; flex-wrap: wrap; gap: .5rem; }
+.bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom); background: var(--c-sidebar); border-top: 1px solid var(--c-border); z-index: 95; }
+@media (max-width: 768px) { .bottom-nav { display: flex; } .section-panel { display: none; } .section-panel.active { display: block; } }
+.nav-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .2rem; border: none; background: transparent; color: var(--c-muted); font-size: .65rem; padding: .4rem; border-radius: 0; }
+.nav-tab.active { color: var(--c-accent); }
+.nav-tab.active svg { stroke: var(--c-accent); }
+.dated-item { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .55rem .75rem; border-radius: var(--r-sm); border: 1px solid var(--c-border); background: var(--c-surface2); margin-bottom: .4rem; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.toggle { position: relative; width: 42px; height: 24px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; border-radius: 24px; background: var(--c-border); transition: .2s; cursor: pointer; }
+.toggle-slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; }
+input:checked + .toggle-slider { background: var(--c-accent); }
+input:checked + .toggle-slider::before { transform: translateX(18px); }
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 200; align-items: center; justify-content: center; }
+.modal.active { display: flex; }
+.modal-inner { background: var(--c-surface); border-radius: var(--r); padding: 1rem; width: 95vw; height: 88vh; max-width: 1200px; display: flex; flex-direction: column; }
+.divider { height: 1px; background: var(--c-border); margin: .9rem 0; }
+.text-green { color: var(--c-green); }
+.text-red { color: var(--c-red); }
+
+.add-punto-certo-box { background: var(--c-surface2); border: 1px dashed var(--c-border); padding: .75rem; border-radius: var(--r-sm); margin-bottom: .75rem; display: none; }
+.add-punto-certo-box.active { display: block; }
+    </style>
+</head>
+<body>
+<div class="shell">
+
+    <!-- TOPBAR -->
+    <header class="topbar" id="topbar">
+        <button class="btn-icon btn-ghost" id="menuToggleBtn" aria-label="Apri menu">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="logo"><span class="logo-icon">📊</span><span id="headerTitle">FinFlow</span></div>
+        <div class="topbar-right">
+            <button class="btn-icon btn-ghost" id="themeToggleBtnMobile"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
+            <button class="btn-icon btn-ghost" onclick="calcolaProiezione()"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+        </div>
+    </header>
+
+    <div class="drawer-overlay" id="drawerOverlay" onclick="chiudiSidebar()"></div>
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo"><span class="logo-icon">📊</span><span>FinFlow</span></div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">Conti</div>
+            <div id="accountsListContainer"></div>
+            <button class="btn-block btn-ghost btn-sm mt" id="btnAddAccount">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Nuovo conto
+            </button>
+        </div>
+        <div class="divider"></div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">Cronologia</div>
+            <div style="display:flex; gap:.4rem;">
+                <button class="btn-block btn-ghost btn-sm" id="undoBtn">↩ Annulla</button>
+                <button class="btn-block btn-ghost btn-sm" id="redoBtn">↪ Ripeti</button>
+            </div>
+        </div>
+        <div class="divider"></div>
+        <div class="sidebar-section">
+            <div class="sidebar-label">Dati</div>
+            <button class="btn-block btn-ghost btn-sm" id="exportFullBtn" style="margin-bottom:.4rem;">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Esporta JSON
+            </button>
+            <label class="btn-file-label btn-block btn-ghost btn-sm" style="margin-bottom:.4rem; cursor:pointer; justify-content:center;">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Importa JSON
+                <input type="file" id="globalImport" accept=".json" style="display:none;">
+            </label>
+        </div>
+        <div class="sidebar-bottom">
+            <div class="toggle-row">
+                <span style="font-size:.85rem; font-weight:600;">🌙 Tema scuro</span>
+                <label class="toggle"><input type="checkbox" id="themeToggleDesktop"><span class="toggle-slider"></span></label>
+            </div>
+            <!-- SEMVER -->
+            <div style="text-align:center; margin-top:1.25rem; font-size:.7rem; color:var(--c-muted); font-weight:600; letter-spacing:.05em;">
+                v1.1.0
+            </div>
+        </div>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main">
+        <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-icon">💰</div><div class="kpi-label">Saldo finale</div><div class="kpi-value" id="kpiFinale">€0</div></div>
+            <div class="kpi-card"><div class="kpi-icon">📈</div><div class="kpi-label">Picco massimo</div><div class="kpi-value" id="kpiMax">€0</div></div>
+            <div class="kpi-card"><div class="kpi-icon">📉</div><div class="kpi-label">Minimo previsto</div><div class="kpi-value" id="kpiMin">€0</div></div>
+        </div>
+
+        <!-- PANNELLO GRAFICO -->
+        <div class="section-panel active" id="panel-grafico">
+
+            <div class="card">
+                <div class="card-header" style="margin-bottom: .5rem;">
+                    <div>
+                        <h2 style="margin-bottom:0;" id="titoloGrafico">📅 Finestra di proiezione</h2>
+                        <p style="font-size:.82rem; color:var(--c-muted); margin-top:.3rem;">Il calcolo parte in background dal tuo primo movimento storico e proietta il futuro sul grafico.</p>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="max-width: 300px;">
+                        <label>Mostra previsione dal grafico per i prossimi:</label>
+                        <select id="orizzonteTemporale">
+                            <option value="3">3 mesi</option>
+                            <option value="6">6 mesi</option>
+                            <option value="12">1 anno</option>
+                            <option value="24">2 anni</option>
+                            <option value="60">5 anni</option>
+                            <option value="120">10 anni</option>
+                            <option value="180">15 anni</option>
+                            <option value="240">20 anni</option>
+                            <option value="600">50 anni</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>📈 Andamento saldo</h2>
+                    <div style="display:flex; gap:.4rem;">
+                        <button class="btn-ghost btn-sm" id="resetZoomBtn">⟳ Reset zoom</button>
+                        <button class="btn-ghost btn-sm" id="fullscreenChartBtn">⛶ Fullscreen</button>
+                    </div>
+                </div>
+                <div class="chart-wrap"><canvas id="graficoSaldo"></canvas></div>
+                <div class="chart-controls">
+                    <span style="font-size:.75rem; color:var(--c-muted);">🖱️ <strong>Usa lo zoom e trascina</strong> il grafico per muoverti liberamente lungo tutto il periodo.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANNELLO SALDI -->
+        <div class="section-panel" id="panel-saldi">
+            <div id="saldiGlobalMessage" style="display:none;" class="card empty-state">
+                <div style="font-size:2rem; margin-bottom:.5rem;">🌍</div>
+                <h3>Sei nella vista "Tutti i conti"</h3>
+                <p style="margin-top:.5rem;">Per gestire i punti certi e il saldo iniziale, seleziona un conto specifico dalla barra laterale sinistra.</p>
+            </div>
+
+            <div id="saldiContent" class="card">
+                <div class="card-header">
+                    <div>
+                        <h2>📌 Saldi noti (punti certi)</h2>
+                        <p style="font-size:.82rem; color:var(--c-muted);">Inserisci saldi verificati per calibrare automaticamente la proiezione di questo conto.</p>
+                    </div>
+                    <button class="btn-ghost btn-sm" onclick="document.getElementById('formPuntoCerto').classList.toggle('active')">+ Aggiungi</button>
+                </div>
+
+                <div class="add-punto-certo-box" id="formPuntoCerto">
+                    <div class="form-row">
+                        <div class="form-group"><label>Data del saldo</label><input type="date" id="inputDataPuntoCerto"></div>
+                        <div class="form-group"><label>Importo (€)</label><input type="number" step="0.01" id="inputImportoPuntoCerto"></div>
+                        <div class="form-group" style="justify-content:flex-end;"><button class="btn-primary" id="btnSalvaPuntoCerto">Salva Punto</button></div>
+                    </div>
+                </div>
+
+                <div id="datedBalancesList"></div>
+                <div class="divider"></div>
+                <div class="form-group" style="max-width:260px;">
+                    <label>Saldo base originario (se 0 punti noti)</label>
+                    <input type="number" id="baseBalanceDefault" step="any" value="0">
+                </div>
+            </div>
+        </div>
+
+        <!-- PANNELLO MOVIMENTI -->
+        <div class="section-panel" id="panel-movimenti">
+            <div id="movimentiGlobalMessage" style="display:none;" class="card empty-state">
+                <div style="font-size:2rem; margin-bottom:.5rem;">🌍</div>
+                <h3>Sei nella vista "Tutti i conti"</h3>
+                <p style="margin-top:.5rem;">Per aggiungere o modificare movimenti ricorrenti e spese, seleziona un conto specifico dalla barra laterale sinistra.</p>
+            </div>
+
+            <div id="movimentiContent">
+                <div class="card" id="cardFormMovimento">
+                    <h2 id="titoloFormMovimento">➕ Nuovo movimento</h2>
+                    <div class="divider"></div>
+                    <div class="form-row" style="margin-bottom:.65rem;">
+                        <div class="form-group"><label>Tipo</label><select id="tipoMovimento"><option value="entrata">💰 Entrata</option><option value="uscita">💸 Uscita</option></select></div>
+                        <div class="form-group"><label>Descrizione</label><input type="text" id="descrizione" placeholder="Stipendio, Affitto…"></div>
+                        <div class="form-group"><label>Importo (€)</label><input type="number" id="importo" step="0.01" value="" min="0" inputmode="decimal"></div>
+                    </div>
+                    <div class="form-row" style="margin-bottom:.65rem;">
+                        <div class="form-group"><label>Frequenza</label><select id="frequenza" onchange="toggleFreqAvanzata()"><option value="una_tantum">Una tantum</option><option value="giornaliera">Giornaliera</option><option value="settimanale">Settimanale</option><option value="mensile">Mensile</option><option value="bimestrale">Bimestrale</option><option value="trimestrale">Trimestrale</option><option value="annuale">Annuale</option><option value="personalizzata">Ogni N giorni</option></select></div>
+                        <div class="form-group" id="gruppoIntervallo" style="display:none;"><label>Ogni X giorni</label><input type="number" id="intervalloGiorni" value="7" min="1"></div>
+                        <div class="form-group"><label>Data inizio</label><input type="date" id="dataInizio"></div>
+                        <div class="form-group"><label>Data fine (opz.)</label><input type="date" id="dataFine"></div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn-primary" id="btnSalvaMovimento">✅ Salva movimento</button>
+                        <button class="btn-ghost btn-sm" id="btnAnnullaModifica" style="display:none;">✕ Annulla modifica</button>
+                        <button class="btn-ghost btn-sm" onclick="resetMovementForm()" id="btnResetForm">Svuota campi</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📋 Movimenti registrati</h2>
+                    <div class="table-wrapper mt">
+                        <table id="tabellaMovimenti">
+                            <thead><tr><th>Tipo</th><th>Descrizione</th><th>Importo</th><th>Frequenza</th><th>Inizio</th><th>Fine</th><th></th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- BOTTOM NAV -->
+<nav class="bottom-nav" id="bottomNav">
+    <button class="nav-tab active" data-panel="grafico" onclick="switchPanel('grafico', this)"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Grafico</button>
+    <button class="nav-tab" data-panel="saldi" onclick="switchPanel('saldi', this)"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>Saldi</button>
+    <button class="nav-tab" data-panel="movimenti" onclick="switchPanel('movimenti', this)"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Movimenti</button>
+</nav>
+
+<!-- MODAL -->
+<div id="modalFullscreen" class="modal">
+    <div class="modal-inner">
+        <div style="display:flex; justify-content:space-between; margin-bottom:1rem;"><h2>📈 Proiezione completa</h2><button class="btn-ghost btn-sm" onclick="chiudiFullscreen()">✕ Chiudi</button></div>
+        <div style="flex:1; position:relative;"><canvas id="graficoFullscreen"></canvas></div>
+    </div>
+</div>
+
+<script>
+// ── Stato globale ──
+let appState = {
+    accounts: [],
+    currentAccountId: 'global',
+    projectionSettings: { orizzonteMesi: 12 },
+    theme: "light"
+};
+let historyStack = [], historyIndex = -1;
+let chartMain = null, fullChart = null;
+let editingMovementId = null;
+
+const PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#0ea5e9'];
+function getRandomHex() { return PALETTE[Math.floor(Math.random() * PALETTE.length)]; }
+
+// ── Date Helpers ──
+function addDays(d, n) { let r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function addMonths(d, n) {
+    let r = new Date(d);
+    let targetMonth = (r.getMonth() + n) % 12;
+    if (targetMonth < 0) targetMonth += 12;
+    r.setMonth(r.getMonth() + n);
+    if (r.getMonth() !== targetMonth) r.setDate(0);
+    return r;
+}
+function addYears(d, n) { return addMonths(d, n * 12); }
+function formatYMD(d) { return d.toISOString().slice(0,10); }
+function formatDisplay(s) { const p=s.split('-'); return `${p[2]}-${p[1]}-${p[0]}`; }
+function diffDays(d1,d2) { return Math.round((new Date(d2)-new Date(d1))/86400000); }
+
+// ── Persistenza & History ──
+function saveToLocalStorage() { localStorage.setItem('fintech_flow_v2', JSON.stringify(appState)); }
+function pushHistory() {
+    historyStack = historyStack.slice(0, historyIndex + 1);
+    historyStack.push(JSON.parse(JSON.stringify(appState)));
+    if(historyStack.length > 60) historyStack.shift();
+    historyIndex = historyStack.length - 1;
+    saveToLocalStorage();
+}
+function restoreFromHistory(state) {
+    appState = JSON.parse(JSON.stringify(state));
+    refreshAllUI(); saveToLocalStorage(); calcolaProiezione();
+}
+function undo() { if(historyIndex > 0) { historyIndex--; restoreFromHistory(historyStack[historyIndex]); } }
+function redo() { if(historyIndex < historyStack.length - 1) { historyIndex++; restoreFromHistory(historyStack[historyIndex]); } }
+
+// ── Funzioni Core ──
+function getCurrentAccount() { return appState.currentAccountId === 'global' ? null : appState.accounts.find(a => a.id === appState.currentAccountId); }
+
+function resetMovementForm() {
+    editingMovementId = null;
+    document.getElementById('titoloFormMovimento').textContent = '➕ Nuovo movimento';
+    document.getElementById('btnSalvaMovimento').textContent = '✅ Salva movimento';
+    document.getElementById('btnAnnullaModifica').style.display = 'none';
+    document.getElementById('descrizione').value = '';
+    document.getElementById('importo').value = '';
+    document.getElementById('dataInizio').value = formatYMD(new Date());
+    document.getElementById('dataFine').value = '';
+    document.getElementById('frequenza').value = 'una_tantum';
+    toggleFreqAvanzata();
+}
+
+function addAccount(name) {
+    const id = Date.now();
+    appState.accounts.push({ id, name: name||`Conto ${appState.accounts.length+1}`, baseBalanceDefault:0, color: getRandomHex(), datedBalances:[], movimenti:[] });
+    appState.currentAccountId = id;
+    pushHistory(); refreshAllUI(); chiudiSidebar();
+}
+function deleteAccount(id) {
+    if(appState.accounts.length <= 1) { alert("Deve esistere almeno un conto."); return; }
+    appState.accounts = appState.accounts.filter(a => a.id !== id);
+    if(appState.currentAccountId === id) appState.currentAccountId = 'global';
+    pushHistory(); refreshAllUI(); calcolaProiezione();
+}
+function setCurrentAccount(id) {
+    appState.currentAccountId = id;
+    resetMovementForm();
+    pushHistory(); refreshAllUI(); calcolaProiezione(); chiudiSidebar();
+}
+
+function updateAccountColor(id, newColor) {
+    const acc = appState.accounts.find(a => a.id === id);
+    if(acc) { acc.color = newColor; pushHistory(); calcolaProiezione(); }
+}
+
+function addMovementToCurrent(mov) {
+    const acc = getCurrentAccount(); if(!acc) return;
+    mov.id = editingMovementId ?? Date.now();
+    if(editingMovementId !== null) {
+        const idx = acc.movimenti.findIndex(m => m.id === editingMovementId);
+        if(idx !== -1) acc.movimenti[idx] = mov;
+    } else {
+        acc.movimenti.push(mov);
+    }
+    pushHistory(); refreshMovementsTable(); calcolaProiezione(); resetMovementForm();
+}
+function deleteMovement(id) {
+    const acc = getCurrentAccount();
+    if(acc) { acc.movimenti = acc.movimenti.filter(m => m.id !== id); pushHistory(); refreshMovementsTable(); calcolaProiezione(); }
+}
+
+function addDatedBalance(date, amount) {
+    const acc = getCurrentAccount(); if(!acc) return;
+    acc.datedBalances.push({ date, amount: parseFloat(amount) });
+    acc.datedBalances.sort((a,b) => new Date(a.date) - new Date(b.date));
+    pushHistory(); refreshDatedList(); calcolaProiezione();
+    document.getElementById('inputDataPuntoCerto').value = '';
+    document.getElementById('inputImportoPuntoCerto').value = '';
+    document.getElementById('formPuntoCerto').classList.remove('active');
+}
+function deleteDatedBalance(index) {
+    const acc = getCurrentAccount();
+    if(acc) { acc.datedBalances.splice(index,1); pushHistory(); refreshDatedList(); calcolaProiezione(); }
+}
+
+function getOccorrenze(mov, startDate, endDate) {
+    const freq = mov.frequenza;
+    const start = new Date(mov.dataInizio);
+    const end = mov.dataFine ? new Date(mov.dataFine) : null;
+    if(end && end < startDate) return [];
+    const limit = (end && end < endDate) ? end : new Date(endDate);
+    const dates = [];
+    if(freq === "una_tantum") {
+        if(start >= startDate && start <= endDate) dates.push(new Date(start));
+        return dates;
+    }
+    let current = new Date(start), maxLoop = 10000;
+    while(current <= limit && maxLoop-- > 0) {
+        if(current >= startDate) dates.push(new Date(current));
+        switch(freq) {
+            case "giornaliera": current = addDays(current,1); break;
+            case "settimanale": current = addDays(current,7); break;
+            case "mensile": current = addMonths(current,1); break;
+            case "bimestrale": current = addMonths(current,2); break;
+            case "trimestrale": current = addMonths(current,3); break;
+            case "annuale": current = addYears(current,1); break;
+            case "personalizzata": current = addDays(current, mov.intervalloGiorni||7); break;
+        }
+    }
+    return dates;
+}
+
+// ── Logica Motore Proiezione ──
+function getDailyBalances(acc, simStart, totalDays) {
+    const eventsMap = new Map();
+    const viewEnd = addDays(simStart, totalDays - 1);
+    acc.movimenti.forEach(mov => {
+        const segno = mov.tipo === "entrata" ? mov.importo : -mov.importo;
+        getOccorrenze(mov, simStart, viewEnd).forEach(d => {
+            const key = formatYMD(d);
+            eventsMap.set(key, (eventsMap.get(key)||0) + segno);
+        });
+    });
+
+    let saldo = parseFloat(acc.baseBalanceDefault) || 0;
+    const rawSaldi = [];
+    for(let i=0; i<totalDays; i++) {
+        const cur = addDays(simStart, i);
+        const key = formatYMD(cur);
+        if(eventsMap.has(key)) saldo += eventsMap.get(key);
+        rawSaldi.push(saldo);
+    }
+
+    const sortedBalances = [...(acc.datedBalances||[])].sort((a,b) => new Date(a.date) - new Date(b.date));
+
+    for(const bal of sortedBalances) {
+        const balDate = new Date(bal.date); balDate.setHours(0,0,0,0);
+        const idx = diffDays(simStart, balDate);
+        if(idx >= 0 && idx < rawSaldi.length) {
+            // FIX: rawSaldi[idx] ha già incorporato gli offset dei punti precedenti.
+            // Non usiamo più cumulativeOffset per evitare il doppio conteggio.
+            const rawVal = rawSaldi[idx];
+            const neededOffset = bal.amount - rawVal;
+
+            // Applica la correzione da questo punto in poi
+            for(let j = idx; j < rawSaldi.length; j++) rawSaldi[j] += neededOffset;
+        }
+    }
+    return rawSaldi;
+}
+
+function computeProjection() {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const orizzonte = parseInt(appState.projectionSettings.orizzonteMesi) || 12;
+    const viewEnd = addMonths(today, orizzonte);
+
+    const isGlobal = appState.currentAccountId === 'global';
+    const accountsToProcess = isGlobal ? appState.accounts : [getCurrentAccount()].filter(Boolean);
+
+    if (accountsToProcess.length === 0) return null;
+
+    let simStart = new Date(today);
+    accountsToProcess.forEach(acc => {
+        acc.movimenti.forEach(m => { const d = new Date(m.dataInizio); if (d < simStart) simStart = d; });
+        acc.datedBalances.forEach(db => { const d = new Date(db.date); if (d < simStart) simStart = d; });
+    });
+    simStart.setHours(0,0,0,0);
+    const totalDays = diffDays(simStart, viewEnd) + 1;
+
+    const rawLabels = [];
+    for(let i=0; i<totalDays; i++) rawLabels.push(formatYMD(addDays(simStart, i)));
+
+    const startIndex = diffDays(simStart, today);
+    const viewLabels = rawLabels.slice(startIndex);
+
+    let globalSaldi = new Array(totalDays).fill(0);
+    const datasetsInfo = [];
+
+    accountsToProcess.forEach(acc => {
+        const saldiAcc = getDailyBalances(acc, simStart, totalDays);
+        for(let i=0; i<totalDays; i++) globalSaldi[i] += saldiAcc[i];
+
+        let viewSaldiAcc = saldiAcc.slice(startIndex);
+        viewSaldiAcc.forEach((_,i) => viewSaldiAcc[i] = parseFloat(viewSaldiAcc[i].toFixed(2)));
+
+        datasetsInfo.push({ label: acc.name, data: viewSaldiAcc, color: acc.color || '#3b82f6' });
+    });
+
+    let viewGlobalSaldi = globalSaldi.slice(startIndex);
+    viewGlobalSaldi.forEach((_,i) => viewGlobalSaldi[i] = parseFloat(viewGlobalSaldi[i].toFixed(2)));
+
+    return {
+        labels: viewLabels,
+        isGlobal,
+        datasetsInfo,
+        globalSaldi: viewGlobalSaldi,
+        finalBalance: viewGlobalSaldi.at(-1) ?? 0,
+        minBalance: viewGlobalSaldi.length ? Math.min(...viewGlobalSaldi) : 0,
+        maxBalance: viewGlobalSaldi.length ? Math.max(...viewGlobalSaldi) : 0
+    };
+}
+
+function fmtEUR(n) { return new Intl.NumberFormat('it-IT',{style:'currency',currency:'EUR'}).format(n); }
+
+// Fabbrica di configurazioni per Chart.js (risolve il bug del Fullscreen isolando i riferimenti)
+function buildChartConfig(proj, isDark) {
+    let chartDatasets = [];
+
+    if (proj.isGlobal) {
+        chartDatasets.push({
+            label: 'Somma Totale',
+            data: proj.globalSaldi,
+            borderColor: isDark ? '#f8fafc' : '#0f172a',
+            borderWidth: 3,
+            borderDash: [6, 4],
+            fill: false,
+            tension: 0.25,
+            pointRadius: 0
+        });
+        proj.datasetsInfo.forEach(d => {
+            chartDatasets.push({
+                label: d.label,
+                data: d.data,
+                borderColor: d.color,
+                borderWidth: 2,
+                fill: false,
+                tension: 0.25,
+                pointRadius: 0
+            });
+        });
+    } else {
+        const d = proj.datasetsInfo[0];
+        chartDatasets.push({
+            label: d.label,
+            data: d.data,
+            borderColor: d.color,
+            backgroundColor: d.color + '20',
+            fill: true,
+            tension: 0.25,
+            pointRadius: 0,
+            borderWidth: 2
+        });
+    }
+
+    return {
+        type: 'line',
+        data: {
+            labels: proj.labels.map(d => { const p = d.split('-'); return `${p[2]}-${p[1]}-${p[0]}`; }),
+            datasets: chartDatasets
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: proj.isGlobal, position: 'bottom', labels: { color: isDark?'#94a3b8':'#64748b', usePointStyle: true, boxWidth: 8 } },
+                tooltip: { callbacks: {
+                    label: ctx => ` ${ctx.dataset.label}: ${fmtEUR(ctx.parsed.y)}`,
+                    title: items => items[0].label
+                }},
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                }
+            },
+            scales: {
+                x: { ticks:{color:isDark?'#94a3b8':'#64748b'}, grid:{color:isDark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)'} },
+                y: { ticks:{color:isDark?'#94a3b8':'#64748b', callback:v=>fmtEUR(v)}, grid:{color:isDark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)'} }
+            }
+        }
+    };
+}
+
+function calcolaProiezione() {
+    const proj = computeProjection(); if(!proj) return;
+    document.getElementById('kpiFinale').textContent = fmtEUR(proj.finalBalance);
+    document.getElementById('kpiMax').textContent = fmtEUR(proj.maxBalance);
+    document.getElementById('kpiMin').textContent = fmtEUR(proj.minBalance);
+    document.getElementById('kpiMin').className = 'kpi-value' + (proj.minBalance < 0 ? ' text-red' : '');
+
+    document.getElementById('headerTitle').textContent = proj.isGlobal ? 'FinFlow (Tutti i conti)' : `FinFlow (${getCurrentAccount().name})`;
+    document.getElementById('titoloGrafico').innerHTML = proj.isGlobal ? '🌍 Proiezione Globale' : `📅 Finestra di proiezione`;
+
+    if(chartMain) chartMain.destroy();
+    const isDark = document.body.classList.contains('dark');
+    const ctx = document.getElementById('graficoSaldo').getContext('2d');
+
+    chartMain = new Chart(ctx, buildChartConfig(proj, isDark));
+}
+
+function refreshAccountsUI() {
+    const container = document.getElementById('accountsListContainer'); if(!container) return;
+    container.innerHTML = '';
+
+    const globalDiv = document.createElement('div');
+    globalDiv.className = `account-item ${appState.currentAccountId === 'global' ? 'active' : ''}`;
+    globalDiv.innerHTML = `<span class="acc-name" style="font-weight:700;">🌍 Tutti i conti</span>`;
+    globalDiv.addEventListener('click', () => setCurrentAccount('global'));
+    container.appendChild(globalDiv);
+
+    appState.accounts.forEach(acc => {
+        if(!acc.color) acc.color = getRandomHex();
+        const div = document.createElement('div');
+        div.className = `account-item ${appState.currentAccountId === acc.id ? 'active' : ''}`;
+        div.innerHTML = `
+            <div class="acc-name">
+                <div class="color-picker-wrap" title="Cambia colore conto">
+                    <input type="color" value="${acc.color}" class="acc-color-input">
+                </div>
+                ${acc.name}
+            </div>
+            <span class="acc-actions">
+                <button class="btn-ghost btn-sm" data-edit="${acc.id}">✏️</button>
+                <button class="btn-danger btn-sm" data-del="${acc.id}">🗑️</button>
+            </span>`;
+
+        div.querySelector('.acc-color-input').addEventListener('click', e => e.stopPropagation());
+        div.querySelector('.acc-color-input').addEventListener('change', e => {
+            e.stopPropagation();
+            updateAccountColor(acc.id, e.target.value);
+        });
+
+        div.querySelector('[data-edit]').addEventListener('click', e => { e.stopPropagation(); const n=prompt('Rinomina:', acc.name); if(n){ acc.name=n; pushHistory(); refreshAccountsUI(); } });
+        div.querySelector('[data-del]').addEventListener('click', e => { e.stopPropagation(); deleteAccount(acc.id); });
+        div.addEventListener('click', () => setCurrentAccount(acc.id));
+        container.appendChild(div);
+    });
+
+    const isGlobal = appState.currentAccountId === 'global';
+    document.getElementById('saldiContent').style.display = isGlobal ? 'none' : 'block';
+    document.getElementById('saldiGlobalMessage').style.display = isGlobal ? 'block' : 'none';
+    document.getElementById('movimentiContent').style.display = isGlobal ? 'none' : 'block';
+    document.getElementById('movimentiGlobalMessage').style.display = isGlobal ? 'block' : 'none';
+}
+
+function refreshMovementsTable() {
+    const acc = getCurrentAccount();
+    if(!acc) return;
+    const tbody = document.querySelector('#tabellaMovimenti tbody'); if(!tbody) return;
+    tbody.innerHTML = '';
+    if(!acc.movimenti.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">Nessun movimento registrato.</td></tr>';
+        return;
+    }
+    const fLabel = f => ({una_tantum:'Singolo', giornaliera:'Giornaliera', settimanale:'Settimana', mensile:'Mese', bimestrale:'2 Mesi', trimestrale:'3 Mesi', annuale:'Anno'}[f]||f);
+    acc.movimenti.forEach(m => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td data-label="Tipo">${m.tipo==='entrata'?'💰 Ent':'💸 Usc'}</td>
+            <td data-label="Descrizione"><strong>${m.descrizione}</strong></td>
+            <td data-label="Importo" class="${m.tipo==='entrata'?'text-green':'text-red'}">${fmtEUR(m.importo)}</td>
+            <td data-label="Frequenza">${m.frequenza==='personalizzata'?`Ogni ${m.intervalloGiorni}g`:fLabel(m.frequenza)}</td>
+            <td data-label="Inizio">${formatDisplay(m.dataInizio)}</td>
+            <td data-label="Fine">${m.dataFine?formatDisplay(m.dataFine):'∞'}</td>
+            <td><div style="display:flex;gap:.3rem"><button class="btn-ghost btn-sm edit-mov" data-id="${m.id}">✏️</button><button class="btn-danger btn-sm del-mov" data-id="${m.id}">🗑️</button></div></td>`;
+        tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('.edit-mov').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mov = acc.movimenti.find(m => m.id === parseInt(btn.dataset.id)); if(!mov) return;
+            editingMovementId = mov.id;
+            document.getElementById('tipoMovimento').value = mov.tipo; document.getElementById('descrizione').value = mov.descrizione; document.getElementById('importo').value = mov.importo; document.getElementById('frequenza').value = mov.frequenza; document.getElementById('dataInizio').value = mov.dataInizio; document.getElementById('dataFine').value = mov.dataFine || '';
+            if(mov.frequenza==='personalizzata') document.getElementById('intervalloGiorni').value = mov.intervalloGiorni;
+            toggleFreqAvanzata();
+            document.getElementById('titoloFormMovimento').textContent = '✏️ Modifica movimento';
+            document.getElementById('btnSalvaMovimento').textContent = '✅ Aggiorna';
+            document.getElementById('btnAnnullaModifica').style.display = 'inline-flex';
+            if(window.innerWidth <= 768) switchPanel('movimenti', document.querySelector('[data-panel="movimenti"]'));
+            document.getElementById('cardFormMovimento').scrollIntoView({ behavior:'smooth', block:'start' });
+        });
+    });
+    tbody.querySelectorAll('.del-mov').forEach(btn => btn.addEventListener('click', () => deleteMovement(parseInt(btn.dataset.id))));
+}
+
+function refreshDatedList() {
+    const acc = getCurrentAccount();
+    if(!acc) return;
+    const container = document.getElementById('datedBalancesList'); if(!container) return;
+    container.innerHTML = '';
+    if(!acc.datedBalances?.length) { container.innerHTML = '<p style="color:var(--c-muted);font-size:.85rem;margin-bottom:.5rem;">Nessun saldo inserito.</p>'; return; }
+    acc.datedBalances.forEach((db, idx) => {
+        const div = document.createElement('div'); div.className = 'dated-item';
+        div.innerHTML = `<div>📅 <strong>${formatDisplay(db.date)}</strong> &nbsp;—&nbsp; ${fmtEUR(db.amount)}</div><button class="btn-danger btn-sm del-dated" data-idx="${idx}">🗑️</button>`;
+        div.querySelector('.del-dated').addEventListener('click', () => deleteDatedBalance(idx));
+        container.appendChild(div);
+    });
+}
+
+function refreshAllUI() {
+    refreshAccountsUI(); refreshMovementsTable(); refreshDatedList();
+    document.getElementById('orizzonteTemporale').value = appState.projectionSettings.orizzonteMesi || 12;
+    const acc = getCurrentAccount();
+    if(acc) document.getElementById('baseBalanceDefault').value = acc.baseBalanceDefault ?? 0;
+    calcolaProiezione();
+}
+
+function toggleFreqAvanzata() { document.getElementById('gruppoIntervallo').style.display = document.getElementById('frequenza').value === 'personalizzata' ? 'flex' : 'none'; }
+function apriSidebar() { document.getElementById('sidebar').classList.add('open'); document.getElementById('drawerOverlay').classList.add('active'); }
+function chiudiSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('drawerOverlay').classList.remove('active'); }
+function switchPanel(id, btn) {
+    document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + id).classList.add('active');
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    if(btn) btn.classList.add('active');
+}
+
+// Genera un nuovo grafico pulito per il fullscreen
+function apriFullscreen() {
+    const proj = computeProjection();
+    if(!proj) return;
+    document.getElementById('modalFullscreen').classList.add('active');
+    requestAnimationFrame(() => {
+        if(fullChart) fullChart.destroy();
+        const isDark = document.body.classList.contains('dark');
+        const ctx = document.getElementById('graficoFullscreen').getContext('2d');
+        fullChart = new Chart(ctx, buildChartConfig(proj, isDark));
+    });
+}
+function chiudiFullscreen() {
+    document.getElementById('modalFullscreen').classList.remove('active');
+    if(fullChart){ fullChart.destroy(); fullChart = null; }
+}
+
+function applyTheme() {
+    const dark = appState.theme === 'dark';
+    document.body.classList.toggle('dark', dark);
+    document.getElementById('themeColorMeta').content = dark ? '#0f172a' : '#ffffff';
+    document.getElementById('themeToggleDesktop').checked = dark;
+    if(chartMain) calcolaProiezione();
+}
+function toggleTheme() { appState.theme = appState.theme === 'light' ? 'dark' : 'light'; applyTheme(); saveToLocalStorage(); }
+
+window.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem('fintech_flow_v2');
+    if(saved) {
+        try {
+            appState = JSON.parse(saved);
+            if(!appState.projectionSettings.orizzonteMesi) appState.projectionSettings.orizzonteMesi = 12;
+            if(!appState.currentAccountId) appState.currentAccountId = 'global';
+        } catch(e){}
+    }
+    if(!appState.accounts?.length) {
+        appState.accounts = [{ id: Date.now(), name: 'Principale', baseBalanceDefault: 0, color: getRandomHex(), datedBalances: [], movimenti: [] }];
+        appState.currentAccountId = appState.accounts[0].id;
+    }
+
+    let changed = false;
+    appState.accounts.forEach(a => { if(!a.color) { a.color = getRandomHex(); changed = true; }});
+    if(changed) saveToLocalStorage();
+
+    resetMovementForm();
+    applyTheme(); pushHistory(); refreshAllUI();
+
+    document.getElementById('orizzonteTemporale').addEventListener('change', (e) => {
+        appState.projectionSettings.orizzonteMesi = parseInt(e.target.value);
+        saveToLocalStorage();
+        calcolaProiezione();
+    });
+
+    document.getElementById('btnSalvaMovimento').addEventListener('click', () => {
+        const mov = {
+            tipo: document.getElementById('tipoMovimento').value,
+            descrizione: document.getElementById('descrizione').value.trim(),
+            importo: parseFloat(document.getElementById('importo').value),
+            frequenza: document.getElementById('frequenza').value,
+            dataInizio: document.getElementById('dataInizio').value,
+            dataFine: document.getElementById('dataFine').value || null,
+            intervalloGiorni: document.getElementById('frequenza').value === 'personalizzata' ? parseInt(document.getElementById('intervalloGiorni').value) : null
+        };
+        if(!mov.descrizione || !mov.dataInizio || isNaN(mov.importo) || mov.importo <= 0) { alert('Compila tutti i campi obbligatori (descrizione, data inizio, importo > 0).'); return; }
+        addMovementToCurrent(mov);
+    });
+
+    document.getElementById('btnAnnullaModifica').addEventListener('click', resetMovementForm);
+
+    document.getElementById('btnSalvaPuntoCerto').addEventListener('click', () => {
+        const d = document.getElementById('inputDataPuntoCerto').value;
+        const a = document.getElementById('inputImportoPuntoCerto').value;
+        if(d && a !== '') addDatedBalance(d, a);
+    });
+
+    document.getElementById('baseBalanceDefault').addEventListener('change', e => {
+        const acc = getCurrentAccount(); if(acc){ acc.baseBalanceDefault = parseFloat(e.target.value)||0; pushHistory(); calcolaProiezione(); }
+    });
+
+    document.getElementById('themeToggleDesktop').addEventListener('change', toggleTheme);
+    document.getElementById('themeToggleBtnMobile').addEventListener('click', toggleTheme);
+    document.getElementById('undoBtn').addEventListener('click', undo);
+    document.getElementById('redoBtn').addEventListener('click', redo);
+    document.getElementById('resetZoomBtn').addEventListener('click', () => { if(chartMain) chartMain.resetZoom(); });
+    document.getElementById('fullscreenChartBtn').addEventListener('click', apriFullscreen);
+    document.getElementById('menuToggleBtn').addEventListener('click', apriSidebar);
+    document.getElementById('btnAddAccount').addEventListener('click', () => { const n=prompt('Nome conto:'); if(n) addAccount(n); });
+
+    document.getElementById('exportFullBtn').addEventListener('click', () => {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(appState, null, 2)], {type:'application/json'})); a.download = 'finflow_backup.json'; a.click();
+    });
+    document.getElementById('globalImport').addEventListener('change', e => {
+        if(e.target.files[0]) {
+            const reader = new FileReader();
+            reader.onload = ev => { try{ const data = JSON.parse(ev.target.result); if(data.accounts) { appState = data; pushHistory(); refreshAllUI(); applyTheme(); } }catch(e){ alert('Errore JSON'); } };
+            reader.readAsText(e.target.files[0]);
+        }
+    });
+
+    document.addEventListener('keydown', e => { if(e.key==='Escape') chiudiFullscreen(); });
+});
+</script>
+</body>
+</html>

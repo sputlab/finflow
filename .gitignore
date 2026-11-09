@@ -1,0 +1,9 @@
+# macOS
+.DS_Store
+
+# Salvataggi personali (dati finanziari privati)
+data/
+*.json
+
+# Versioni precedenti / non funzionanti (solo in locale)
+archive/
